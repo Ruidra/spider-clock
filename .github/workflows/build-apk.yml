@@ -38,6 +38,13 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x android/gradlew
 
+    - name: Debug project structure
+      run: |
+        pwd
+        ls -la
+        ls -la android/
+        cat android/gradle-wrapper.properties
+
     - name: Build Debug APK
       run: cd android && ./gradlew assembleDebug
 
