@@ -13,7 +13,6 @@ permissions:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: android
@@ -25,7 +24,7 @@ jobs:
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
+          distribution: "temurin"
           java-version: "17"
 
       - name: Verify Java environment
@@ -41,17 +40,14 @@ jobs:
       - name: Verify the APK
         run: |
           EXPECTED_APK="app/build/outputs/apk/debug/app-debug.apk"
-
           if [ ! -f "$EXPECTED_APK" ]; then
             echo "ERROR: APK not found at $EXPECTED_APK"
             exit 1
           fi
-
           if [ ! -s "$EXPECTED_APK" ]; then
             echo "ERROR: APK is empty"
             exit 1
           fi
-
           echo "APK verified: $EXPECTED_APK"
           ls -lh "$EXPECTED_APK"
 
@@ -70,21 +66,16 @@ jobs:
           if [ -z "$SANITIZED_REPO" ]; then
             SANITIZED_REPO="android-app"
           fi
-
           RELEASE_FILENAME="${SANITIZED_REPO}-debug-build-${GITHUB_RUN_NUMBER}.apk"
           TEMP_ASSET_DIR="${RUNNER_TEMP}/apk-release-asset"
           mkdir -p "$TEMP_ASSET_DIR"
-
           SOURCE_APK="app/build/outputs/apk/debug/app-debug.apk"
           TARGET_APK="${TEMP_ASSET_DIR}/${RELEASE_FILENAME}"
-
           cp "$SOURCE_APK" "$TARGET_APK"
-
           if [ ! -f "$TARGET_APK" ] || [ ! -s "$TARGET_APK" ]; then
             echo "ERROR: Release asset copy failed or is empty: $TARGET_APK"
             exit 1
           fi
-
           echo "Prepared release asset: $TARGET_APK"
           echo "asset_path=$TARGET_APK" >> "$GITHUB_OUTPUT"
           echo "asset_name=$RELEASE_FILENAME" >> "$GITHUB_OUTPUT"
@@ -100,10 +91,8 @@ jobs:
             echo "ERROR: Asset missing or empty"
             exit 1
           fi
-
           RELEASE_TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           RELEASE_TITLE="Debug APK Build #${GITHUB_RUN_NUMBER}"
-
           NOTES_FILE=$(mktemp)
           {
             echo "### Debug APK Build #${GITHUB_RUN_NUMBER}"
@@ -115,7 +104,6 @@ jobs:
             echo "- **Source Commit SHA**: ${GITHUB_SHA}"
             echo "- **Intended Use**: Testing and preview purposes"
           } > "$NOTES_FILE"
-
           gh release create "$RELEASE_TAG" "$ASSET_PATH" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE" \
@@ -129,7 +117,6 @@ jobs:
         run: |
           RELEASE_TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           ASSET_NAME="${{ steps.prepare_release.outputs.asset_name }}"
-
           if [ "${{ steps.publish_release.outcome }}" = "success" ]; then
             RELEASE_VIEW_JSON=$(gh release view "$RELEASE_TAG" --json url,tagName,title 2>/dev/null || echo "{}")
             RELEASE_URL=$(echo "$RELEASE_VIEW_JSON" | jq -r '.url // empty')
