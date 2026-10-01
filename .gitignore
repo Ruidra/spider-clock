@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+android/.gradle/
+android/build/
+android/app/build/
+
+# Local configuration
+local.properties
+android/local.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# APK
+*.apk
+*.aar
+
+# Logs
+*.log
