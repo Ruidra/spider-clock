@@ -46,6 +46,8 @@ jobs:
         cat android/gradle/wrapper/gradle-wrapper.properties
 
     - name: Build Debug APK
+      env:
+        GRADLE_OPTS: "-Xmx2048m -Dfile.encoding=UTF-8"
       run: |
         cd android
         chmod +x gradlew
