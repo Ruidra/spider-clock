@@ -1,67 +1,138 @@
-name: Build APK
+name: Build and Release Debug APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '17'
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
-      with:
-        cmdline-tools-version: latest
-        packages: platforms;android-34 build-tools;34.0.0
+      - name: Accept Android licenses
+        run: |
+          yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses
 
-    - name: Accept Android licenses
-      run: |
-        yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-    - name: Cache Gradle packages
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-
+      - name: Build the debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
+      - name: Verify the APK
+        run: |
+          EXPECTED_APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$EXPECTED_APK" ]; then
+            echo "ERROR: APK not found at $EXPECTED_APK"
+            exit 1
+          fi
+          if [ ! -s "$EXPECTED_APK" ]; then
+            echo "ERROR: APK is empty"
+            exit 1
+          fi
+          echo "APK verified: $EXPECTED_APK"
+          ls -lh "$EXPECTED_APK"
 
-    - name: Debug project structure
-      run: |
-        pwd
-        ls -la
-        ls -la android/
-        cat android/gradle/wrapper/gradle-wrapper.properties
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
-    - name: Build Debug APK
-      working-directory: android
-      run: ./gradlew assembleDebug --stacktrace
+      - name: Prepare APK release asset
+        id: prepare_release
+        run: |
+          RAW_REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          SANITIZED_REPO=$(echo "$RAW_REPO_NAME" | tr '[:upper:]' '[:lower:]' | sed -e 's/[^a-z0-9._-]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//')
+          if [ -z "$SANITIZED_REPO" ]; then
+            SANITIZED_REPO="android-app"
+          fi
+          RELEASE_FILENAME="${SANITIZED_REPO}-debug-build-${GITHUB_RUN_NUMBER}.apk"
+          TEMP_ASSET_DIR="${RUNNER_TEMP}/apk-release-asset"
+          mkdir -p "$TEMP_ASSET_DIR"
+          SOURCE_APK="app/build/outputs/apk/debug/app-debug.apk"
+          TARGET_APK="${TEMP_ASSET_DIR}/${RELEASE_FILENAME}"
+          cp "$SOURCE_APK" "$TARGET_APK"
+          if [ ! -f "$TARGET_APK" ] || [ ! -s "$TARGET_APK" ]; then
+            echo "ERROR: Release asset copy failed or is empty: $TARGET_APK"
+            exit 1
+          fi
+          echo "Prepared release asset: $TARGET_APK"
+          echo "asset_path=$TARGET_APK" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$RELEASE_FILENAME" >> "$GITHUB_OUTPUT"
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: spider-clock-debug-apk
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish APK to GitHub Releases
+        id: publish_release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSET_PATH="${{ steps.prepare_release.outputs.asset_path }}"
+          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
+            echo "ERROR: Asset missing or empty"
+            exit 1
+          fi
+          RELEASE_TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          RELEASE_TITLE="Debug APK Build #${GITHUB_RUN_NUMBER}"
+          NOTES_FILE=$(mktemp)
+          {
+            echo "### Debug APK Build #${GITHUB_RUN_NUMBER}"
+            echo ""
+            echo "- **Build Type**: Automatically generated debug APK"
+            echo "- **Builder**: GitHub Actions"
+            echo "- **Workflow Run Number**: ${GITHUB_RUN_NUMBER}"
+            echo "- **Workflow Run Attempt**: ${GITHUB_RUN_ATTEMPT}"
+            echo "- **Source Commit SHA**: ${GITHUB_SHA}"
+            echo "- **Intended Use**: Testing and preview purposes"
+          } > "$NOTES_FILE"
+          gh release create "$RELEASE_TAG" "$ASSET_PATH" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes-file "$NOTES_FILE" \
+            --latest
 
-    - name: Create Release
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: android/app/build/outputs/apk/debug/app-debug.apk
-        generate_release_notes: true
+      - name: Report APK result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          ASSET_NAME="${{ steps.prepare_release.outputs.asset_name }}"
+          if [ "${{ steps.publish_release.outcome }}" = "success" ]; then
+            RELEASE_VIEW_JSON=$(gh release view "$RELEASE_TAG" --json url,tagName,title 2>/dev/null || echo "{}")
+            RELEASE_URL=$(echo "$RELEASE_VIEW_JSON" | jq -r '.url // empty')
+            echo "Release URL: $RELEASE_URL"
+            echo "APK Asset Filename: $ASSET_NAME"
+            echo "## 🚀 Debug APK Build & Release Succeeded" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::GitHub Release publishing was not completed or encountered an error."
+            echo "## ⚠️ Debug APK Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
